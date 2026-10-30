@@ -15,8 +15,10 @@ jobs:
         with:
           node-version: "22"
       - name: Install pinned dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Check JavaScript syntax
         run: npm run check
       - name: Compile Vite application
         run: npm run build
+      - name: Verify authorization and RLS locally
+        run: npm test

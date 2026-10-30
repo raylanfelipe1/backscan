@@ -1,11 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
+import { readPublicConfig } from "./config.js";
 import "./styles.css";
 
 const root = document.getElementById("app");
-const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const configured = Boolean(url && key);
-const db = configured ? createClient(url, key, {
+const config = readPublicConfig(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
+const configured = Boolean(config);
+const db = configured ? createClient(config.url, config.key, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 }) : null;
 let currentUser = null;
@@ -51,7 +51,7 @@ function shell() {
   root.appendChild(header);
   return header;
 }
-function splash() {
+function splash(message = "") {
   shell();
   const view = el("main", "page center");
   const card = el("section", "panel auth");
@@ -59,7 +59,7 @@ function splash() {
     el("h1", "", "Central de incidentes"),
     el("p", "muted", "Registre ameaças, reúna evidências e prepare relatórios em um espaço privado."));
   if (!configured) {
-    add(card, el("p", "notice error", "Aplicação ainda não configurada. Defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY na Vercel."));
+    add(card, el("p", "notice", "Serviço em preparação. O painel privado ainda não está disponível."));
     view.appendChild(card); root.appendChild(view); return;
   }
   const form = el("form", "stack");
@@ -69,7 +69,7 @@ function splash() {
   email.input.autocomplete = "email";
   const send = el("button", "btn primary", "Entrar no painel");
   send.type = "submit";
-  const note = el("p", "notice", "O acesso depende de uma conta autorizada no Supabase Auth. Não há cadastro público.");
+  const note = el("p", message ? "notice error" : "notice", message || "Acesso exclusivo para contas autorizadas. Não há cadastro público.");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     send.disabled = true; send.textContent = "Entrando...";
@@ -78,7 +78,7 @@ function splash() {
     });
     send.disabled = false; send.textContent = "Entrar no painel";
     if (error) setNotice(note, "Não foi possível entrar. Verifique suas credenciais.", true);
-    else await route();
+    // SIGNED_IN aciona a navegação pelo observador da sessão.
   });
   add(form, email.wrap, password.wrap, send);
   add(card, form, note);
@@ -90,6 +90,13 @@ async function route() {
   const { data: { user }, error } = await db.auth.getUser();
   if (error || !user) { currentUser = null; splash(); return; }
   currentUser = user;
+  const { data: authorization, error: authorizationError } = await db.from("authorized_users")
+    .select("user_id").eq("user_id", user.id).maybeSingle();
+  if (authorizationError || !authorization) {
+    currentUser = null;
+    splash("Esta conta não tem acesso ao painel. Solicite autorização ao administrador.");
+    return;
+  }
   await renderDashboard();
 }
 async function fetchIncidents() {
@@ -105,12 +112,16 @@ async function renderDashboard() {
   const left = el("div");
   add(left, el("div", "eyebrow", "PAINEL PRIVADO"), el("h1", "", "Registro de incidentes"),
     el("p", "muted", "Acesso restrito • Evidências protegidas por usuário"));
-  add(headline, left, button("Sair", async () => { await db.auth.signOut(); splash(); }, "btn ghost"));
+  add(headline, left, button("Sair", async () => {
+    const { error } = await db.auth.signOut();
+    if (error) { alert("Não foi possível encerrar a sessão. Tente novamente."); return; }
+    currentUser = null; activeIncident = null; incidents = []; splash();
+  }, "btn ghost"));
   add(page, headline);
   const notice = el("p", "notice", "");
   page.appendChild(notice);
   try { await fetchIncidents(); } catch (err) {
-    setNotice(notice, "Não foi possível consultar o banco. Verifique se a configuração SQL foi aplicada.", true);
+    setNotice(notice, "Não foi possível carregar os registros. Tente novamente em instantes.", true);
     incidents = [];
   }
   const metrics = el("div", "metrics");
@@ -194,29 +205,36 @@ async function showIncident(incident, scroll = true) {
     const allowed = ["image/png", "image/jpeg", "image/webp", "application/pdf", "text/plain"];
     if (!allowed.includes(file.type)) { setNotice(status, "Formato não permitido.", true); return; }
     send.disabled = true;
-    const hashBytes = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-    const sha256 = Array.from(new Uint8Array(hashBytes), n=>n.toString(16).padStart(2,"0")).join("");
-    const path = currentUser.id + "/" + incident.id + "/" + crypto.randomUUID();
-    const uploaded = await db.storage.from("backscan-evidence").upload(path, file, {
-      contentType: file.type, upsert: false
-    });
-    if (uploaded.error) {
-      setNotice(status, "Falha no envio: " + uploaded.error.message, true);
-      send.disabled = false; return;
+    try {
+      const hashBytes = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      const sha256 = Array.from(new Uint8Array(hashBytes), n=>n.toString(16).padStart(2,"0")).join("");
+      const path = currentUser.id + "/" + incident.id + "/" + crypto.randomUUID();
+      const uploaded = await db.storage.from("backscan-evidence").upload(path, file, {
+        contentType: file.type, upsert: false
+      });
+      if (uploaded.error) {
+        setNotice(status, "Não foi possível enviar o arquivo. Verifique sua conexão e sua autorização.", true);
+        return;
+      }
+      const recorded = await db.from("evidence").insert({
+        incident_id: incident.id, owner_id: currentUser.id,
+        file_path: path, file_name: file.name.slice(0,240), sha256
+      });
+      if (recorded.error) {
+        const cleanup = await db.storage.from("backscan-evidence").remove([path]);
+        setNotice(status, cleanup.error
+          ? "O registro falhou e o arquivo enviado não pôde ser removido. Informe o administrador."
+          : "Não foi possível registrar a evidência. O arquivo enviado foi removido; tente novamente.", true);
+      } else {
+        input.value = "";
+        setNotice(status, "Evidência anexada; hash SHA-256 registrado.");
+        await listEvidence(incident.id, panel);
+      }
+    } catch {
+      setNotice(status, "A operação foi interrompida. Consulte a lista de evidências antes de tentar novamente.", true);
+    } finally {
+      send.disabled = false;
     }
-    const recorded = await db.from("evidence").insert({
-      incident_id: incident.id, owner_id: currentUser.id,
-      file_path: path, file_name: file.name.slice(0,240), sha256
-    });
-    if (recorded.error) {
-      await db.storage.from("backscan-evidence").remove([path]);
-      setNotice(status, "Falha ao registrar evidência: " + recorded.error.message, true);
-    } else {
-      input.value = "";
-      setNotice(status, "Evidência anexada; hash SHA-256 registrado.");
-      await listEvidence(incident.id, panel);
-    }
-    send.disabled = false;
   }, "btn primary");
   add(panel, fileLabel, send, status);
   await listEvidence(incident.id, panel);
@@ -235,11 +253,17 @@ async function listEvidence(incidentId, panel) {
     add(info, el("strong", "", file.file_name),
       el("small", "hash", "SHA-256: " + file.sha256),
       el("small", "muted", new Date(file.created_at).toLocaleString("pt-BR")));
-    const open = button("Abrir", async () => {
+    const open = button("Gerar acesso ao arquivo", async () => {
       const {data: signed, error: err} = await db.storage.from("backscan-evidence")
         .createSignedUrl(file.file_path, 60);
       if (err) { alert("Arquivo indisponível."); return; }
-      window.open(signed.signedUrl, "_blank", "noopener,noreferrer");
+      const link = document.createElement("a");
+      link.href = signed.signedUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
+      link.className = "signed-link";
+      link.textContent = "Abrir arquivo (válido por 60 segundos)";
+      item.querySelector(".signed-link")?.remove();
+      open.after(link);
+      window.setTimeout(() => link.remove(), 60000);
     }, "btn outline small-btn");
     add(item, info, open); box.appendChild(item);
   });
@@ -260,6 +284,8 @@ function downloadCsv() {
 }
 
 if (configured) {
-  db.auth.onAuthStateChange(() => { window.setTimeout(route, 0); });
+  db.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_IN" || event === "SIGNED_OUT") window.setTimeout(route, 0);
+  });
 }
 route();
