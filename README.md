@@ -1,193 +1,38 @@
-# Tutorial Completo: Configurando e Rodando o BackScan no Ubuntu do Zero
+# BackScan Web — V0.1
 
-Este tutorial irá guiar um iniciante absoluto para configurar um ambiente de desenvolvimento no Ubuntu e rodar o projeto **BackScan**.
+Painel privado de incidentes e evidências, desenvolvido na branch `develop`. A `main` original permanece preservada e não deve ser publicada por este fluxo.
 
----
+## Situação atual
 
-## 1. Atualizar o Sistema Operacional
-Antes de começar, é recomendado atualizar os pacotes do Ubuntu.
+A interface compila e as políticas SQL passaram por testes locais de isolamento. A conexão real está **pendente**: o Supabase recusou a criação do projeto dedicado por limite de dois projetos gratuitos ativos. O usuário optou por concluir a preparação e adiar a conexão. Nenhum banco R4Food/Finance foi alterado e nenhum valor Supabase foi configurado na Vercel.
 
-```bash
-sudo apt update && sudo apt upgrade -y
+Consulte [ativação e testes reais](docs/ACTIVATION.md) e [limites da verificação](docs/VERIFICATION.md).
+
+## Recursos
+
+- Login por senha e autorização administrativa explícita, sem formulário público de cadastro.
+- Incidentes privados por usuário, histórico e CSV com neutralização de fórmulas.
+- Upload de PNG, JPEG, WebP, PDF e TXT até 10 MB em bucket privado.
+- Metadados vinculados ao arquivo, proprietário e incidente, com hash SHA-256.
+- Acesso a arquivos por links assinados de 60 segundos.
+- RLS para tabelas e Storage; revogação de autorização verificada a cada operação.
+
+Não há coleta de GPS, comprovantes fictícios, rastreamento encoberto ou integração com Telegram.
+
+## Desenvolvimento
+
+Requer Node.js 22.12+ (Vercel usa Node 24). Execute:
+
+```sh
+npm ci
+npm run check
+npm test
+npm run build
+npm run dev
 ```
 
----
+Sem variáveis de ambiente, a aplicação mostra serviço em preparação. Após criar o projeto exclusivo, preencher `.env.local` usando `.env.example`. Somente a URL HTTPS do projeto e sua chave `sb_publishable_...` são aceitas. Nunca colocar segredos em variáveis `VITE_`.
 
-## 2. Instalar o Node.js e o npm
-O projeto requer o **Node.js 16+**.
+`npm test` executa PostgreSQL em memória com PGlite e tabelas mínimas de Auth/Storage. Testa o mesmo `sql/schema.sql` usado na ativação, sem se conectar a bancos remotos. O script é exclusivo para um projeto novo; não é uma migração incremental para bancos já configurados.
 
-### 2.1 Verificar se o Node.js já está instalado
-```bash
-node -v
-```
-Se aparecer um número de versão (ex: `v16.13.0`), pule para a próxima etapa.
-
-### 2.2 Instalar o Node.js
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-### 2.3 Verificar a instalação
-```bash
-node -v  # Deve exibir a versão do Node.js
-npm -v   # Deve exibir a versão do npm
-```
-
----
-
-## 3. Instalar o Git
-O Git é necessário para clonar o projeto.
-
-```bash
-sudo apt install -y git
-```
-Verifique a instalação:
-```bash
-git --version
-```
-
----
-
-## 4. Clonar o Repositório BackScan
-
-```bash
-git clone https://github.com/PedroHBessa/backscan.git
-cd backscan
-```
-
----
-
-## 5. Instalar as Dependências do Projeto
-
-```bash
-npm install
-```
-
----
-
-## 6. Configurar as Variáveis do Projeto
-Edite o arquivo `server.js`:
-
-```bash
-nano server.js
-```
-
-Substitua **BOT-TOKEN** pelo token do seu bot do Telegram.
-
-Substitua **CHAT-TOKEN** pelo ID do chat ou grupo onde deseja receber as mensagens.
-
-Pressione **CTRL + X**, depois **Y** e **Enter** para salvar.
-
----
-
-## 7. Criar e Configurar um Bot no Telegram
-
-1. No Telegram, procure por **@BotFather**.
-2. Envie o comando:
-   ```
-   /newbot
-   ```
-3. Siga as instruções e anote o **token** fornecido.
-4. Para obter o **ID do chat/grupo**:
-   - Adicione o bot ao grupo.
-   - Envie uma mensagem no grupo.
-   - Acesse:
-     ```
-     https://api.telegram.org/botSEU_BOT_TOKEN/getUpdates
-     ```
-   - Anote o `chat_id`.
-
----
-
-## 8. Iniciar o Servidor
-
-```bash
-node server.js
-```
-
-Se tudo estiver correto, a saída deve indicar que o servidor está rodando.
-
----
-
-## 9. Instalar e Configurar o Ngrok
-O **Ngrok** é usado para expor o servidor local para a internet.
-
-### 9.1 Baixar e Instalar o Ngrok
-```bash
-wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-linux-amd64.zip
-unzip ngrok-stable-linux-amd64.zip
-chmod +x ngrok
-sudo mv ngrok /usr/local/bin/
-```
-
-### 9.2 Criar Conta no Ngrok
-Acesse [https://ngrok.com/](https://ngrok.com/) e crie uma conta.
-
-Após criar a conta, pegue seu **Authtoken** e rode:
-```bash
-ngrok authtoken SEU_AUTHTOKEN
-```
-
----
-
-## 10. Expor o Servidor com o Ngrok
-
-```bash
-ngrok http 8088
-```
-
-Copie a **URL gerada pelo Ngrok** (exemplo: `https://abc123.ngrok.io`).
-
----
-
-## 11. Atualizar a URL no Projeto
-Abra o arquivo `index.html`:
-```bash
-nano index.html
-```
-Substitua `https://abc123.ngrok.io` pela URL gerada pelo Ngrok:
-```js
-fetch("https://abc123.ngrok.io/send-location", {
-```
-Salve as alterações (**CTRL + X**, **Y**, **Enter**).
-
----
-
-## 12. Testar o Projeto
-Abra o **index.html** no navegador e permita o acesso à localização. Se tudo estiver correto, a localização será enviada para o bot no Telegram.
-
----
-
-## 13. Hospedar a Página HTML na Vercel
-
-Para deixar a interface do **BackScan** online, vamos hospedar o `index.html` na Vercel.
-
-### 13.1 Criar uma Conta na Vercel
-1. Acesse [https://vercel.com/](https://vercel.com/) e crie uma conta (pode usar o login do GitHub).
-2. Após logar, clique em **"New Project"**.
-
-### 13.2 Subir o Projeto para o GitHub
-Caso ainda não tenha subido o código:
-```bash
-git init
-git add index.html
-git commit -m "Adiciona interface do BackScan"
-git branch -M main
-git remote add origin https://github.com/seu-usuario/backscan-frontend.git
-git push -u origin main
-```
-
-### 13.3 Implantar na Vercel
-1. Na Vercel, clique em **"Import Git Repository"** e selecione o repositório do seu projeto.
-2. Escolha as configurações padrão e clique em **Deploy**.
-3. Após a implantação, copie a URL gerada (ex: `https://backscan.vercel.app`).
-
-Agora qualquer pessoa pode acessar sua página! 🚀
-
----
-
-## Conclusão
-Agora você tem o projeto BackScan rodando do zero no Ubuntu, mesmo sem experiência em programação. 🚀
-
+O hash identifica os bytes anexados; não autentica o conteúdo nem identifica usuários de WhatsApp. Os relatórios e arquivos podem conter dados sensíveis e devem permanecer sob controle dos usuários autorizados.
